@@ -1,0 +1,286 @@
+import logging
+from pathlib import Path
+from typing import Set, List, Dict, Optional
+import pathspec
+
+from .tokenizer import get_tokenizer
+from .parser import (
+    has_frontmatter,
+    extract_frontmatter,
+    is_skill_file,
+    extract_skill_body,
+    get_skill_description,
+    get_skill_name,
+)
+from .models import (
+    AuditResult,
+    GlobalFileReport,
+    SkillReport,
+    Violation,
+    ViolationCode,
+    ViolationSeverity,
+)
+
+logger = logging.getLogger(__name__)
+
+GLOBAL_INSTRUCTION_FILES = {
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".cursorrules",
+    ".codesandbox",
+    ".codestudio",
+    "INSTRUCTIONS.md",
+    "SYSTEM.md",
+    ".instructions.md",
+    ".prompt.md",
+}
+
+HARDCODED_EXCLUSIONS = {
+    "node_modules",
+    "dist",
+    "build",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "site-packages",
+}
+
+VAULT_DIRS = {".vault", "vault", "_vault"}
+POINTER_FILE_MARKERS = {
+    "load_skill",
+    "skill_id",
+    "list_dir",
+    "ls",
+    "view_file",
+    "read_file",
+    "cat",
+}
+
+
+class Auditor:
+    def __init__(self, target_path: Path):
+        self.target_path = target_path.resolve()
+        self.tokenizer = get_tokenizer()
+        self.violations: List[Violation] = []
+        self.global_files: List[GlobalFileReport] = []
+        self.skills: List[SkillReport] = []
+        self.pathspec_obj: Optional[pathspec.PathSpec] = None
+        self._load_gitignore()
+
+    def _load_gitignore(self) -> None:
+        """Load .gitignore patterns if present."""
+        gitignore_path = self.target_path / ".gitignore"
+        if gitignore_path.exists():
+            try:
+                patterns = gitignore_path.read_text(encoding="utf-8", errors="replace").strip().split("\n")
+                self.pathspec_obj = pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+            except Exception as e:
+                logger.warning(f"[WARN] Failed to parse .gitignore: {e}")
+
+    def _should_exclude(self, rel_path: Path) -> bool:
+        """Check if path should be excluded based on hardcoded rules and .gitignore."""
+        parts = rel_path.parts
+        
+        for part in parts:
+            if part.startswith(".") and part not in {".claude", ".cursor", ".agents", ".vault"}:
+                return True
+            if part in HARDCODED_EXCLUSIONS:
+                return True
+        
+        if self.pathspec_obj:
+            if self.pathspec_obj.match_file(str(rel_path)):
+                return True
+        
+        return False
+
+    def _is_pointer_file(self, content: str) -> bool:
+        """Check if file contains pointer file markers."""
+        return any(marker in content for marker in POINTER_FILE_MARKERS)
+
+    def _is_in_vault(self, rel_path: Path) -> bool:
+        """Check if file is within a vault directory."""
+        for vault_dir in VAULT_DIRS:
+            if vault_dir in rel_path.parts:
+                return True
+        return False
+
+    def _is_ungated_skill(self, rel_path: Path, skill_path: Path) -> bool:
+        """Check if skill is ungated (outside vault, not referenced via pointer)."""
+        if self._is_in_vault(rel_path):
+            return False
+        
+        return True
+
+    def walk_files(self) -> List[Path]:
+        """Recursively walk target directory, respecting exclusions."""
+        result = []
+        try:
+            for path in self.target_path.rglob("*"):
+                if path.is_file():
+                    rel_path = path.relative_to(self.target_path)
+                    if not self._should_exclude(rel_path):
+                        result.append(path)
+        except Exception as e:
+            logger.error(f"Error walking directory: {e}")
+        return result
+
+    def audit(self) -> AuditResult:
+        """Run full audit on target directory."""
+        if not self.target_path.exists():
+            raise FileNotFoundError(f"Target path does not exist: {self.target_path}")
+
+        files = self.walk_files()
+        
+        for file_path in files:
+            self._audit_file(file_path)
+        
+        self._compute_violations()
+        
+        current_tokens = self._calculate_current_startup_tokens()
+        projected_tokens = self._calculate_projected_startup_tokens()
+        reduction = 0.0
+        if current_tokens > 0:
+            reduction = ((current_tokens - projected_tokens) / current_tokens) * 100
+
+        return AuditResult(
+            path=str(self.target_path),
+            startup_tokens_current=current_tokens,
+            startup_tokens_projected=projected_tokens,
+            reduction_percent=reduction,
+            global_files=self.global_files,
+            skills=self.skills,
+            violations=self.violations,
+        )
+
+    def _audit_file(self, file_path: Path) -> None:
+        """Audit a single file."""
+        if not file_path.suffix.lower() in [".md", ".markdown"]:
+            return
+        
+        rel_path = file_path.relative_to(self.target_path)
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            logger.warning(f"[WARN] Failed to read {rel_path}: {e}")
+            return
+        
+        tokens = self.tokenizer.count_tokens(content)
+        
+        self._check_non_ascii(file_path, content)
+        
+        if file_path.name in GLOBAL_INSTRUCTION_FILES:
+            self.global_files.append(GlobalFileReport(path=str(rel_path), tokens=tokens))
+        
+        if is_skill_file(file_path, content):
+            frontmatter = extract_frontmatter(content)
+            body = extract_skill_body(content)
+            body_tokens = self.tokenizer.count_tokens(body)
+            
+            skill_report = SkillReport(
+                path=str(rel_path),
+                tokens=tokens,
+                has_frontmatter=True,
+                description_length=len(get_skill_description(frontmatter)),
+                name=get_skill_name(frontmatter),
+                ungated=self._is_ungated_skill(rel_path, file_path),
+                vaultable=self._is_ungated_skill(rel_path, file_path),
+                body_tokens=body_tokens,
+            )
+            self.skills.append(skill_report)
+        elif "skills" in rel_path.parts and file_path.suffix.lower() in [".md", ".markdown"]:
+            self.violations.append(
+                Violation(
+                    code=ViolationCode.NO_FRONTMATTER,
+                    severity=ViolationSeverity.WARN,
+                    file=str(rel_path),
+                    detail="Skill file in skills/ directory missing YAML frontmatter",
+                )
+            )
+
+    def _check_non_ascii(self, file_path: Path, content: str) -> None:
+        """Check for high non-ASCII character ratio."""
+        if not content:
+            return
+        
+        non_ascii_count = sum(1 for c in content if ord(c) > 127)
+        ratio = non_ascii_count / len(content)
+        
+        if ratio > 0.2:
+            rel_path = file_path.relative_to(self.target_path)
+            self.violations.append(
+                Violation(
+                    code=ViolationCode.NON_ASCII_ESTIMATE,
+                    severity=ViolationSeverity.INFO,
+                    file=str(rel_path),
+                    detail=f"{ratio*100:.1f}% non-ASCII characters; token count may be understated",
+                )
+            )
+
+    def _compute_violations(self) -> None:
+        """Compute all violations."""
+        cumulative_global_tokens = sum(g.tokens for g in self.global_files)
+        
+        for global_file in self.global_files:
+            if global_file.tokens > 3000:
+                global_file.over_limit = True
+                global_file.excess = global_file.tokens - 3000
+                self.violations.append(
+                    Violation(
+                        code=ViolationCode.GLOBAL_BLOAT,
+                        severity=ViolationSeverity.CRITICAL,
+                        file=global_file.path,
+                        detail=f"Exceeds 3000 token limit by {global_file.excess} tokens",
+                    )
+                )
+        
+        if cumulative_global_tokens > 3000:
+            self.violations.append(
+                Violation(
+                    code=ViolationCode.CUMULATIVE_GLOBAL_BLOAT,
+                    severity=ViolationSeverity.CRITICAL,
+                    file="(all global files)",
+                    detail=f"Cumulative global files exceed 3000 tokens by {cumulative_global_tokens - 3000} tokens",
+                )
+            )
+        
+        for skill in self.skills:
+            if skill.ungated:
+                self.violations.append(
+                    Violation(
+                        code=ViolationCode.SKILL_UNGATED,
+                        severity=ViolationSeverity.WARN,
+                        file=skill.path,
+                        detail="Ungated skill eligible for migration to .vault/",
+                    )
+                )
+            
+            if skill.description_length < 10:
+                self.violations.append(
+                    Violation(
+                        code=ViolationCode.EMPTY_DESCRIPTION,
+                        severity=ViolationSeverity.WARN,
+                        file=skill.path,
+                        detail=f"Description is {skill.description_length} chars; routing may fail",
+                    )
+                )
+            
+            if skill.body_tokens > 5000:
+                self.violations.append(
+                    Violation(
+                        code=ViolationCode.SKILL_BODY_LARGE,
+                        severity=ViolationSeverity.INFO,
+                        file=skill.path,
+                        detail=f"Skill body is {skill.body_tokens} tokens (>5000 recommended limit)",
+                    )
+                )
+
+    def _calculate_current_startup_tokens(self) -> int:
+        """Calculate current startup token cost (global + ungated skills)."""
+        global_tokens = sum(g.tokens for g in self.global_files)
+        ungated_tokens = sum(s.tokens for s in self.skills if s.ungated)
+        return global_tokens + ungated_tokens
+
+    def _calculate_projected_startup_tokens(self) -> int:
+        """Calculate projected startup cost after migration (global only)."""
+        return sum(g.tokens for g in self.global_files)
