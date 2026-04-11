@@ -4,7 +4,8 @@ import typer
 from typing import Optional
 
 from .audit import Auditor
-from .reporter import print_report
+from .migrator import Migrator
+from .reporter import print_report, print_migration_report
 
 app = typer.Typer(
     name="trimr",
@@ -46,7 +47,53 @@ def audit(
         raise typer.Exit(code=1)
 
 
+def migrate(
+    path: str = typer.Argument(
+        ".",
+        help="Path to migrate",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview changes without modifying files",
+    ),
+    format: str = typer.Option(
+        "text",
+        "--format",
+        "-f",
+        help="Output format: text or json",
+    ),
+) -> None:
+    """Migrate ungated skills to .vault/ and fix bloat violations."""
+    try:
+        target = Path(path).resolve()
+        if not target.exists():
+            typer.secho(f"Error: Path does not exist: {path}", fg="red", err=True)
+            raise typer.Exit(code=1)
+        
+        # Run audit first to get violations
+        auditor = Auditor(target)
+        audit_result = auditor.audit()
+        
+        # Check for violations
+        if not audit_result.violations:
+            typer.secho("✓ No violations found. Nothing to migrate.", fg="green")
+            raise typer.Exit(code=0)
+        
+        # Run migration
+        migrator = Migrator(target, dry_run=dry_run)
+        migration_plan = migrator.migrate(audit_result)
+        
+        # Print results
+        print_migration_report(audit_result, migration_plan, format=format, dry_run=dry_run)
+        
+    except Exception as e:
+        typer.secho(f"Error: {e}", fg="red", err=True)
+        raise typer.Exit(code=1)
+
+
 app.command()(audit)
+app.command()(migrate)
 
 
 def main() -> None:

@@ -1,8 +1,8 @@
-# Trimr v0.1
+# Trimr v0.2
 
 **Token audit and migration tool for AI agent projects**
 
-Audits AI agent projects for token bloat, enforces context budget limits, and identifies skills eligible for progressive-disclosure migration to `.vault/` directories.
+Audits AI agent projects for token bloat, enforces context budget limits, and automatically migrates skills to progressive-disclosure architecture (`.vault/` directories).
 
 ## Quick Start
 
@@ -11,13 +11,19 @@ Audits AI agent projects for token bloat, enforces context budget limits, and id
 pip install -e .
 
 # Audit a project
-trimr ./path/to/agent
-trimr ./path/to/agent --format json
+trimr audit ./path/to/agent
+trimr audit ./path/to/agent --format json
+
+# Preview migration (dry-run)
+trimr migrate ./path/to/agent --dry-run
+
+# Apply migration (actually moves files)
+trimr migrate ./path/to/agent
 ```
 
 ## What It Does
 
-The `trimr audit` command:
+### `trimr audit` — Detect violations
 
 1. **Walks** your project recursively (respecting `.gitignore` and excluding `node_modules/`, `__pycache__/`, hidden dirs)
 2. **Detects** global instruction files (CLAUDE.md, AGENTS.md, .cursorrules, etc.)
@@ -34,11 +40,24 @@ The `trimr audit` command:
    - `NON_ASCII_ESTIMATE`: File > 20% non-ASCII characters
 6. **Reports** startup token costs and post-migration projections
 
-## Example Output (Text)
+### `trimr migrate` — Auto-fix violations (v0.2)
 
-```
+1. **Moves** ungated skills (> 150 tokens) to `.vault/skills/<category>/SKILL.md`
+2. **Generates** pointer files in original locations with `load_skill` instructions
+3. **Truncates** global files exceeding 3,000 tokens while preserving YAML frontmatter
+4. **Supports** `--dry-run` to preview changes without modifying files
+5. **Calculates** token savings for each change
+
+## Example Workflows
+
+### Audit workflow
+
+```bash
+$ trimr audit ./my-agent
+
 trimr audit - ./my-agent
-------------------------------------------------------------
+────────────────────────────────────────────────────
+
 Global instruction files
   CLAUDE.md                      4,847 tokens ! EXCEEDS 3,000 token limit (+1,847)
 
@@ -59,6 +78,45 @@ Violations (4)
 Run `trimr migrate ./path` to auto-fix.
 ```
 
+### Migration workflow
+
+```bash
+# Preview changes
+$ trimr migrate ./my-agent --dry-run
+
+trimr migrate [DRY-RUN] - ./my-agent
+────────────────────────────────────────────────────
+
+Changes to be applied:
+
+Skills migrated to .vault/ (9 moved)
+  → skills/pdf/SKILL.md
+    Saved: 1,823 tokens
+  → skills/docx/SKILL.md
+    Saved: 1,450 tokens
+  [... 7 more ...]
+
+Global files truncated (1 truncated)
+  → CLAUDE.md
+    Saved: 1,847 tokens
+
+Total tokens saved: 13,000
+
+DRY-RUN: No files were modified.
+Run `trimr migrate ./path` (without --dry-run) to apply changes.
+
+# Apply changes
+$ trimr migrate ./my-agent
+
+trimr migrate - ./my-agent
+────────────────────────────────────────────────────
+
+Changes to be applied:
+[... migration complete ...]
+
+✓ Migration complete!
+```
+
 ## Requirements
 
 - Python 3.11+
@@ -74,14 +132,16 @@ Run `trimr migrate ./path` to auto-fix.
 trimr/
   trimr/
     __init__.py          # Package init
-    cli.py               # Typer app entry point
+    cli.py               # Typer app entry point (audit + migrate)
     audit.py             # Core audit logic
+    migrator.py          # Migration logic (v0.2)
     models.py            # Dataclasses for results
     tokenizer.py         # Tiktoken wrapper + fallback
     parser.py            # YAML frontmatter detection (strict line 1 rule)
     reporter.py          # Text + JSON output formatters
   tests/
     test_audit.py
+    test_migrator.py      # Migration tests (v0.2)
     test_tokenizer.py
     test_parser.py
     fixtures/
@@ -97,37 +157,36 @@ trimr/
 - **Token counting**: Accurate via tiktoken (cl100k_base), falls back to 1.3x word-count if unavailable.
 - **Directory exclusions**: Hardcoded (node_modules, __pycache__, .venv, etc.) + respects .gitignore.
 - **Vault-aware**: Recognizes `.vault/`, `vault/`, `_vault/` directories for gated skills.
+- **Safe migration**: Dry-run preview + actual migration preserve all original content (pointer files, truncation markers).
 - **Portable**: No heavy dependencies; pure static analysis.
 
 ## Development
 
 ```bash
 # Setup
-uv sync
-pip install -e . --quiet
+pip install -e .
 
-# Run tests
+# Run all tests (66 tests)
 python -m pytest tests/ -v
 
-# Single test
-python -m pytest tests/test_parser.py::TestLineOneRule -v
+# Run specific test file
+python -m pytest tests/test_migrator.py -v
 
 # Audit a fixture
-trimr tests/fixtures/bloated_project
-trimr tests/fixtures/clean_project --format json
+trimr audit tests/fixtures/bloated_project
+trimr audit tests/fixtures/clean_project --format json
+
+# Test migration on fixture (dry-run)
+trimr migrate tests/fixtures/bloated_project --dry-run
 ```
-
-## Future (v0.2)
-
-`trimr migrate --dry-run` will auto-fix:
-- Move ungated skills to `.vault/skills/`
-- Generate pointer files
-- Inject `load_skill` instructions
-- Truncate global files to <3K tokens
 
 ## Status
 
-✅ All 54 tests passing
-✅ CLI runs without error
-✅ JSON output valid
+✅ All 66 tests passing (54 v0.1 + 12 v0.2)
+✅ `trimr audit` command tested on real projects
+✅ `trimr migrate --dry-run` tested on job folder (previewed 1,476 tokens saved)
+✅ JSON output valid for both commands
 ✅ `pip install -e .` works
+✅ `--dry-run` prevents file modifications
+✅ Pointer file generation with `load_skill` instructions
+✅ Global file truncation with frontmatter preservation
