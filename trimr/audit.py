@@ -144,6 +144,17 @@ class Auditor:
         
         self._compute_violations()
         
+        # Check if this looks like a Claude/Cursor project
+        has_claude_structure = any([
+            (self.target_path / "CLAUDE.md").exists(),
+            (self.target_path / ".claude").exists(),
+            (self.target_path / ".cursor").exists(),
+            (self.target_path / ".agents").exists(),
+        ])
+        
+        if not has_claude_structure:
+            logger.warning("⚠  No Claude/Cursor project structure detected. Results may be incomplete.")
+        
         current_tokens = self._calculate_current_startup_tokens()
         projected_tokens = self._calculate_projected_startup_tokens()
         reduction = 0.0

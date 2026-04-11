@@ -4,6 +4,12 @@
 
 Audits AI agent projects for token bloat, enforces context budget limits, and automatically migrates skills to progressive-disclosure architecture (`.vault/` directories).
 
+## Who This Is For
+
+**trimr is optimized for Claude Code and Cursor IDE** projects using markdown-based skills with YAML frontmatter.
+
+**Not for:** Langchain, OpenAI Assistants, Anthropic Workbench, or any framework that doesn't use `.md` skill files.
+
 ## Quick Start
 
 ```bash
