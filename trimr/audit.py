@@ -90,7 +90,7 @@ class Auditor:
         parts = rel_path.parts
         
         for part in parts:
-            if part.startswith(".") and part not in {".claude", ".cursor", ".agents", ".vault"}:
+            if part.startswith(".") and part not in {".claude", ".cursor", ".agents", ".vault", ".anthropic"}:
                 return True
             if part in HARDCODED_EXCLUSIONS:
                 return True
@@ -124,7 +124,7 @@ class Auditor:
         result = []
         try:
             for path in self.target_path.rglob("*"):
-                if path.is_file():
+                if path.is_file() and not path.is_symlink():
                     rel_path = path.relative_to(self.target_path)
                     if not self._should_exclude(rel_path):
                         result.append(path)
@@ -166,7 +166,10 @@ class Auditor:
         suffix = file_path.suffix.lower()
         
         try:
-            content = file_path.read_text(encoding="utf-8", errors="replace")
+            content = file_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            logger.warning(f"[WARN] Skipping non-UTF-8 file: {rel_path} (not valid UTF-8 encoding)")
+            return
         except Exception as e:
             logger.warning(f"[WARN] Failed to read {rel_path}: {e}")
             return

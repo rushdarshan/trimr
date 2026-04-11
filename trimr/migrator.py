@@ -72,7 +72,10 @@ class Migrator:
         
         # Read skill content
         try:
-            content = source_path.read_text(encoding="utf-8", errors="replace")
+            content = source_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            logger.error(f"Failed to read skill {skill.path}: file is not valid UTF-8")
+            return
         except Exception as e:
             logger.error(f"Failed to read skill: {skill.path}: {e}")
             return
@@ -97,9 +100,12 @@ class Migrator:
             # Create vault directory structure
             vault_parent.mkdir(parents=True, exist_ok=True)
             
-            # Move skill to vault
-            shutil.move(str(source_path), str(vault_path))
-            logger.info(f"Moved {skill.path} → {vault_path.relative_to(self.target_path)}")
+            # Move skill to vault (check if target already exists to avoid silent overwrites)
+            if vault_path.exists():
+                logger.warning(f"Vault skill already exists at {vault_path.relative_to(self.target_path)}, skipping move")
+            else:
+                shutil.move(str(source_path), str(vault_path))
+                logger.info(f"Moved {skill.path} → {vault_path.relative_to(self.target_path)}")
             
             # Create pointer file in original location
             source_path.write_text(pointer_content, encoding="utf-8")
@@ -119,15 +125,19 @@ class Migrator:
     
     def _create_pointer_file(self, skill_name: str, vault_path: Path) -> str:
         """Generate pointer file content with load_skill instruction."""
+        import yaml
         vault_rel = vault_path.relative_to(self.target_path)
         
-        # Construct pointer file with YAML frontmatter
-        content = f"""---
-name: {skill_name} (pointer)
-description: Load {skill_name} from vault. Managed by trimr migrate.
----
-
-This skill has been migrated to progressive-disclosure architecture.
+        # Construct pointer file with YAML frontmatter (using safe_dump to prevent injection)
+        frontmatter = {
+            "name": f"{skill_name} (pointer)",
+            "description": f"Load {skill_name} from vault. Managed by trimr migrate."
+        }
+        
+        frontmatter_yaml = yaml.safe_dump(frontmatter, default_flow_style=False).strip()
+        
+        skill_id = skill_name.lower().replace(' ', '_')
+        body = f"""This skill has been migrated to progressive-disclosure architecture.
 
 Use the load_skill instruction:
 
@@ -135,8 +145,10 @@ Use the load_skill instruction:
 load_skill(".vault/skills/{vault_rel.parent.name}/SKILL.md")
 ```
 
-Or reference directly via skill_id: {skill_name.lower().replace(' ', '_')}
+Or reference directly via skill_id: {skill_id}
 """
+        
+        content = f"---\n{frontmatter_yaml}\n---\n\n{body}"
         return content.strip() + "\n"
     
     def _truncate_global_file(self, global_file: GlobalFileReport) -> None:
@@ -148,7 +160,10 @@ Or reference directly via skill_id: {skill_name.lower().replace(' ', '_')}
             return
         
         try:
-            content = file_path.read_text(encoding="utf-8", errors="replace")
+            content = file_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            logger.error(f"Failed to read global file {global_file.path}: file is not valid UTF-8")
+            return
         except Exception as e:
             logger.error(f"Failed to read global file: {global_file.path}: {e}")
             return

@@ -266,8 +266,8 @@ class TestAuditorNonASCII:
     def test_audit_non_ascii_detection(self, tmp_path):
         """Test audit detects high non-ASCII ratio."""
         skill_file = tmp_path / "test.md"
-        content = "ñ" * 100 + "a" * 100
-        skill_file.write_text(content)
+        content = "---\nname: test\ndescription: test\n---\n\n" + "ñ" * 100 + "a" * 100
+        skill_file.write_text(content, encoding="utf-8")
         
         auditor = Auditor(tmp_path)
         result = auditor.audit()
