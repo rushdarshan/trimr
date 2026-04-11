@@ -34,6 +34,7 @@ class GlobalFileReport:
     tokens: int
     over_limit: bool = False
     excess: int = 0
+    note: str = ""
 
 
 @dataclass

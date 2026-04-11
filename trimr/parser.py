@@ -30,6 +30,33 @@ def has_frontmatter(content: str) -> bool:
     return True
 
 
+def has_malformed_frontmatter(content: str) -> bool:
+    """
+    Check if content has frontmatter NOT at line 1 (Flaw 5 fix).
+    Detects patterns like:
+    - # Title
+      ---
+      name: ...
+    - Blank line before ---
+    """
+    if not content:
+        return False
+    
+    lines = content.split("\n", 3)
+    if len(lines) < 2:
+        return False
+    
+    # Line 1 is not ---, but --- appears somewhere in first 3 lines
+    if lines[0] != "---":
+        for i in range(min(3, len(lines))):
+            if lines[i].strip() == "---":
+                # Check if it looks like a closing --- (would indicate frontmatter below)
+                if i > 0:
+                    return True
+    
+    return False
+
+
 def extract_frontmatter(content: str) -> Optional[Dict[str, Any]]:
     """
     Extract YAML frontmatter from content.

@@ -6,6 +6,7 @@ import pathspec
 from .tokenizer import get_tokenizer
 from .parser import (
     has_frontmatter,
+    has_malformed_frontmatter,
     extract_frontmatter,
     is_skill_file,
     extract_skill_body,
@@ -33,6 +34,13 @@ GLOBAL_INSTRUCTION_FILES = {
     "SYSTEM.md",
     ".instructions.md",
     ".prompt.md",
+}
+
+CONFIG_FILES_WITH_SYSTEM_PROMPTS = {
+    ".json": ["prompts", "config", "agents", "system", "instructions"],
+    ".yaml": ["prompts", "config", "agents", "system", "instructions"],
+    ".yml": ["prompts", "config", "agents", "system", "instructions"],
+    ".toml": ["prompts", "config", "agents", "system", "instructions"],
 }
 
 HARDCODED_EXCLUSIONS = {
@@ -153,11 +161,9 @@ class Auditor:
         )
 
     def _audit_file(self, file_path: Path) -> None:
-        """Audit a single file."""
-        if not file_path.suffix.lower() in [".md", ".markdown"]:
-            return
-        
+        """Audit a single file: markdown, config files with system prompts, etc."""
         rel_path = file_path.relative_to(self.target_path)
+        suffix = file_path.suffix.lower()
         
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace")
@@ -167,37 +173,102 @@ class Auditor:
         
         tokens = self.tokenizer.count_tokens(content)
         
-        self._check_non_ascii(file_path, content)
-        
-        if file_path.name in GLOBAL_INSTRUCTION_FILES:
-            self.global_files.append(GlobalFileReport(path=str(rel_path), tokens=tokens))
-        
-        if is_skill_file(file_path, content):
-            frontmatter = extract_frontmatter(content)
-            body = extract_skill_body(content)
-            body_tokens = self.tokenizer.count_tokens(body)
+        # Check markdown files (original behavior)
+        if suffix in [".md", ".markdown"]:
+            self._check_non_ascii(file_path, content)
             
-            skill_report = SkillReport(
-                path=str(rel_path),
-                tokens=tokens,
-                has_frontmatter=True,
-                description_length=len(get_skill_description(frontmatter)),
-                name=get_skill_name(frontmatter),
-                ungated=self._is_ungated_skill(rel_path, file_path),
-                vaultable=self._is_ungated_skill(rel_path, file_path),
-                body_tokens=body_tokens,
-            )
-            self.skills.append(skill_report)
-        elif "skills" in rel_path.parts and file_path.suffix.lower() in [".md", ".markdown"]:
-            self.violations.append(
-                Violation(
-                    code=ViolationCode.NO_FRONTMATTER,
-                    severity=ViolationSeverity.WARN,
-                    file=str(rel_path),
-                    detail="Skill file in skills/ directory missing YAML frontmatter",
+            if file_path.name in GLOBAL_INSTRUCTION_FILES:
+                self.global_files.append(GlobalFileReport(path=str(rel_path), tokens=tokens))
+            
+            if is_skill_file(file_path, content):
+                frontmatter = extract_frontmatter(content)
+                body = extract_skill_body(content)
+                body_tokens = self.tokenizer.count_tokens(body)
+                desc = get_skill_description(frontmatter)
+                is_ungated = self._is_ungated_skill(rel_path, file_path)
+                
+                skill_report = SkillReport(
+                    path=str(rel_path),
+                    name=get_skill_name(frontmatter),
+                    body_tokens=body_tokens,
+                    tokens=tokens,
+                    has_frontmatter=True,
+                    description_length=len(desc),
+                    ungated=is_ungated,
+                    vaultable=is_ungated,
                 )
-            )
-
+                self.skills.append(skill_report)
+            elif has_frontmatter(content):
+                self.violations.append(
+                    Violation(
+                        file=str(rel_path),
+                        code=ViolationCode.MALFORMED_FRONTMATTER,
+                        detail="Frontmatter found but missing required 'name' or 'description' field",
+                        severity=ViolationSeverity.INFO,
+                    )
+                )
+            elif has_malformed_frontmatter(content):
+                # Flaw 5 fix: Detect malformed frontmatter and still count tokens
+                self.violations.append(
+                    Violation(
+                        file=str(rel_path),
+                        code=ViolationCode.MALFORMED_FRONTMATTER,
+                        detail="Frontmatter delimiter (---) not on line 1. Expected format: --- at line 1, then YAML, then --- to close.",
+                        severity=ViolationSeverity.WARN,
+                    )
+                )
+            elif "skills" in rel_path.parts:
+                # File is in skills/ but has no frontmatter
+                self.violations.append(
+                    Violation(
+                        file=str(rel_path),
+                        code=ViolationCode.NO_FRONTMATTER,
+                        severity=ViolationSeverity.WARN,
+                        detail="Skill file in skills/ directory missing YAML frontmatter",
+                    )
+                )
+        
+        # Check config files for system prompts (Flaw 3 fix)
+        elif suffix in CONFIG_FILES_WITH_SYSTEM_PROMPTS:
+            if self._is_config_with_system_prompt(file_path, content):
+                self.global_files.append(
+                    GlobalFileReport(
+                        path=str(rel_path),
+                        tokens=tokens,
+                        note=f"Config file with system prompt ({suffix})"
+                    )
+                )
+        
+    def _is_config_with_system_prompt(self, file_path: Path, content: str) -> bool:
+        """Check if config file contains system prompts or agent instructions."""
+        suffix = file_path.suffix.lower()
+        basename = file_path.stem.lower()
+        
+        # Check filename heuristics
+        for keyword in CONFIG_FILES_WITH_SYSTEM_PROMPTS.get(suffix, []):
+            if keyword in basename:
+                return True
+        
+        # Check content for system prompt keys
+        system_prompt_keys = {
+            "system_prompt",
+            "system",
+            "prompt",
+            "instructions",
+            "instruction",
+            "agent_prompt",
+            "context",
+            "preamble",
+            "rules",
+        }
+        
+        content_lower = content.lower()
+        for key in system_prompt_keys:
+            if f'"{key}"' in content_lower or f"'{key}'" in content_lower or f"{key}:" in content_lower:
+                return True
+        
+        return False
+    
     def _check_non_ascii(self, file_path: Path, content: str) -> None:
         """Check for high non-ASCII character ratio."""
         if not content:
