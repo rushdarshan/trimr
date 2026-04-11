@@ -282,5 +282,16 @@ class Auditor:
         return global_tokens + ungated_tokens
 
     def _calculate_projected_startup_tokens(self) -> int:
-        """Calculate projected startup cost after migration (global only)."""
-        return sum(g.tokens for g in self.global_files)
+        """
+        Calculate projected startup cost after migration.
+        
+        Progressive-disclosure architecture:
+        - Global files: loaded at startup (unchanged)
+        - Vaulted skills: L1 metadata only (~100 tokens per skill for name+description)
+        
+        Formula: global_tokens + (vaultable_skill_count × 100)
+        """
+        global_tokens = sum(g.tokens for g in self.global_files)
+        vaultable_skill_count = sum(1 for s in self.skills if s.vaultable)
+        l1_metadata_tokens = vaultable_skill_count * 100
+        return global_tokens + l1_metadata_tokens
