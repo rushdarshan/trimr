@@ -213,6 +213,10 @@ def render_fix_json_report(audit_result: AuditResult, fix_plan: MigrationPlan, d
     data = {
         "target": str(fix_plan.target_path),
         "dry_run": dry_run,
+        "startup_tokens_current": audit_result.startup_tokens_current,
+        "startup_tokens_projected": audit_result.startup_tokens_projected,
+        "reduction_percent": round(audit_result.reduction_percent, 1),
+        "total_tokens_saved": fix_plan.total_tokens_saved,
         "changes": [
             {
                 "type": c.change_type,
@@ -223,7 +227,6 @@ def render_fix_json_report(audit_result: AuditResult, fix_plan: MigrationPlan, d
             }
             for c in fix_plan.changes
         ],
-        "total_tokens_saved": fix_plan.total_tokens_saved,
         "summary": {
             "frontmatter_added": sum(1 for c in fix_plan.changes if c.change_type == "frontmatter_added"),
             "skills_moved": sum(1 for c in fix_plan.changes if c.change_type == "skill_moved"),
