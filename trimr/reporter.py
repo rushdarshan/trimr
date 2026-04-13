@@ -162,6 +162,76 @@ def render_migration_json_report(audit_result: AuditResult, migration_plan: Migr
     return json.dumps(data, indent=2)
 
 
+def render_fix_text_report(audit_result: AuditResult, fix_plan: MigrationPlan, dry_run: bool = False) -> str:
+    """Render fix results as formatted text output."""
+    lines = []
+
+    dry_run_marker = " [DRY-RUN]" if dry_run else ""
+    lines.append(f"trimr fix{dry_run_marker} - {fix_plan.target_path}")
+    lines.append("-" * 60)
+    lines.append("")
+
+    if not fix_plan.changes:
+        lines.append("No automatic fixes available.")
+        return "\n".join(lines)
+
+    lines.append("Changes to be applied:" if dry_run else "Changes applied:")
+    lines.append("")
+
+    frontmatter_added = [c for c in fix_plan.changes if c.change_type == "frontmatter_added"]
+    skills_moved = [c for c in fix_plan.changes if c.change_type == "skill_moved"]
+
+    if frontmatter_added:
+        lines.append(f"Frontmatter added ({len(frontmatter_added)} files)")
+        for change in frontmatter_added:
+            lines.append(f"  -> {change.source}")
+        lines.append("")
+
+    if skills_moved:
+        lines.append(f"Skills moved to .vault/ ({len(skills_moved)} files)")
+        for change in skills_moved:
+            lines.append(f"  -> {change.source}")
+            if change.target:
+                lines.append(f"    Vault: {change.target}")
+            lines.append(f"    Saved: {change.tokens_saved:,} tokens")
+        lines.append("")
+
+    lines.append(f"Total tokens saved: {fix_plan.total_tokens_saved:,}")
+    lines.append("")
+
+    if dry_run:
+        lines.append("DRY-RUN: No files were modified.")
+        lines.append("Run `trimr fix ./path` without --dry-run to apply changes.")
+    else:
+        lines.append("Fix complete.")
+
+    return "\n".join(lines)
+
+
+def render_fix_json_report(audit_result: AuditResult, fix_plan: MigrationPlan, dry_run: bool = False) -> str:
+    """Render fix results as JSON."""
+    data = {
+        "target": str(fix_plan.target_path),
+        "dry_run": dry_run,
+        "changes": [
+            {
+                "type": c.change_type,
+                "source": c.source,
+                "target": c.target,
+                "tokens_saved": c.tokens_saved,
+                "reason": c.reason,
+            }
+            for c in fix_plan.changes
+        ],
+        "total_tokens_saved": fix_plan.total_tokens_saved,
+        "summary": {
+            "frontmatter_added": sum(1 for c in fix_plan.changes if c.change_type == "frontmatter_added"),
+            "skills_moved": sum(1 for c in fix_plan.changes if c.change_type == "skill_moved"),
+        },
+    }
+    return json.dumps(data, indent=2)
+
+
 def print_report(result: AuditResult, format: str = "text") -> None:
     """Print audit report to console."""
     if format == "json":
@@ -180,5 +250,16 @@ def print_migration_report(audit_result: AuditResult, migration_plan: MigrationP
         print(output)
     else:
         output = render_migration_text_report(audit_result, migration_plan, dry_run=dry_run)
+        for line in output.split("\n"):
+            print(line)
+
+
+def print_fix_report(audit_result: AuditResult, fix_plan: MigrationPlan, format: str = "text", dry_run: bool = False) -> None:
+    """Print fix report to console."""
+    if format == "json":
+        output = render_fix_json_report(audit_result, fix_plan, dry_run=dry_run)
+        print(output)
+    else:
+        output = render_fix_text_report(audit_result, fix_plan, dry_run=dry_run)
         for line in output.split("\n"):
             print(line)

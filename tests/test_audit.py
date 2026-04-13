@@ -68,6 +68,17 @@ class TestAuditorBasic:
         
         assert len(files) == 1
 
+    def test_auditor_includes_anthropic_dir(self, tmp_path):
+        """Test auditor does NOT exclude .anthropic dir."""
+        (tmp_path / ".anthropic").mkdir()
+        (tmp_path / ".anthropic" / "system.json").write_text('{"system_prompt": "hello"}')
+
+        auditor = Auditor(tmp_path)
+        files = auditor.walk_files()
+
+        assert len(files) == 1
+        assert files[0].name == "system.json"
+
 
 class TestAuditorGlobalFiles:
     """Test global instruction file detection."""
@@ -107,6 +118,36 @@ class TestAuditorGlobalFiles:
         bloat_violations = [v for v in result.violations if v.code == ViolationCode.GLOBAL_BLOAT]
         assert len(bloat_violations) > 0
         assert bloat_violations[0].severity == ViolationSeverity.CRITICAL
+
+    def test_audit_detects_json_config_with_system_prompt(self, tmp_path):
+        """Config files (.json) with system prompts should be treated as global."""
+        config = tmp_path / "prompts.json"
+        config.write_text('{"system_prompt": "' + ("x" * 250) + '"}')
+
+        auditor = Auditor(tmp_path)
+        result = auditor.audit()
+
+        assert any(g.path == "prompts.json" for g in result.global_files)
+
+    def test_audit_detects_yaml_config_with_system_prompt(self, tmp_path):
+        """Config files (.yaml) with system prompts should be treated as global."""
+        config = tmp_path / "agents.yaml"
+        config.write_text("instructions: |\n  " + ("x" * 250) + "\n")
+
+        auditor = Auditor(tmp_path)
+        result = auditor.audit()
+
+        assert any(g.path == "agents.yaml" for g in result.global_files)
+
+    def test_audit_detects_toml_config_with_system_prompt(self, tmp_path):
+        """Config files (.toml) with system prompts should be treated as global."""
+        config = tmp_path / "agent.toml"
+        config.write_text('prompt = "' + ("x" * 250) + '"\n')
+
+        auditor = Auditor(tmp_path)
+        result = auditor.audit()
+
+        assert any(g.path == "agent.toml" for g in result.global_files)
 
 
 class TestAuditorSkills:

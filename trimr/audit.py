@@ -1,7 +1,6 @@
 import logging
 from pathlib import Path
 from typing import Set, List, Dict, Optional
-import pathspec
 
 from .tokenizer import get_tokenizer
 from .parser import (
@@ -21,48 +20,9 @@ from .models import (
     ViolationCode,
     ViolationSeverity,
 )
+from .adapters import ClaudeAdapter
 
 logger = logging.getLogger(__name__)
-
-GLOBAL_INSTRUCTION_FILES = {
-    "CLAUDE.md",
-    "AGENTS.md",
-    ".cursorrules",
-    ".codesandbox",
-    ".codestudio",
-    "INSTRUCTIONS.md",
-    "SYSTEM.md",
-    ".instructions.md",
-    ".prompt.md",
-}
-
-CONFIG_FILES_WITH_SYSTEM_PROMPTS = {
-    ".json": ["prompts", "config", "agents", "system", "instructions"],
-    ".yaml": ["prompts", "config", "agents", "system", "instructions"],
-    ".yml": ["prompts", "config", "agents", "system", "instructions"],
-    ".toml": ["prompts", "config", "agents", "system", "instructions"],
-}
-
-HARDCODED_EXCLUSIONS = {
-    "node_modules",
-    "dist",
-    "build",
-    "__pycache__",
-    ".venv",
-    "venv",
-    "site-packages",
-}
-
-VAULT_DIRS = {".vault", "vault", "_vault"}
-POINTER_FILE_MARKERS = {
-    "load_skill",
-    "skill_id",
-    "list_dir",
-    "ls",
-    "view_file",
-    "read_file",
-    "cat",
-}
 
 
 class Auditor:
@@ -72,65 +32,11 @@ class Auditor:
         self.violations: List[Violation] = []
         self.global_files: List[GlobalFileReport] = []
         self.skills: List[SkillReport] = []
-        self.pathspec_obj: Optional[pathspec.PathSpec] = None
-        self._load_gitignore()
-
-    def _load_gitignore(self) -> None:
-        """Load .gitignore patterns if present."""
-        gitignore_path = self.target_path / ".gitignore"
-        if gitignore_path.exists():
-            try:
-                patterns = gitignore_path.read_text(encoding="utf-8", errors="replace").strip().split("\n")
-                self.pathspec_obj = pathspec.PathSpec.from_lines("gitwildmatch", patterns)
-            except Exception as e:
-                logger.warning(f"[WARN] Failed to parse .gitignore: {e}")
-
-    def _should_exclude(self, rel_path: Path) -> bool:
-        """Check if path should be excluded based on hardcoded rules and .gitignore."""
-        parts = rel_path.parts
-        
-        for part in parts:
-            if part.startswith(".") and part not in {".claude", ".cursor", ".agents", ".vault", ".anthropic"}:
-                return True
-            if part in HARDCODED_EXCLUSIONS:
-                return True
-        
-        if self.pathspec_obj:
-            if self.pathspec_obj.match_file(str(rel_path)):
-                return True
-        
-        return False
-
-    def _is_pointer_file(self, content: str) -> bool:
-        """Check if file contains pointer file markers."""
-        return any(marker in content for marker in POINTER_FILE_MARKERS)
-
-    def _is_in_vault(self, rel_path: Path) -> bool:
-        """Check if file is within a vault directory."""
-        for vault_dir in VAULT_DIRS:
-            if vault_dir in rel_path.parts:
-                return True
-        return False
-
-    def _is_ungated_skill(self, rel_path: Path, skill_path: Path) -> bool:
-        """Check if skill is ungated (outside vault, not referenced via pointer)."""
-        if self._is_in_vault(rel_path):
-            return False
-        
-        return True
+        self.adapter = ClaudeAdapter(self.target_path)
 
     def walk_files(self) -> List[Path]:
         """Recursively walk target directory, respecting exclusions."""
-        result = []
-        try:
-            for path in self.target_path.rglob("*"):
-                if path.is_file() and not path.is_symlink():
-                    rel_path = path.relative_to(self.target_path)
-                    if not self._should_exclude(rel_path):
-                        result.append(path)
-        except Exception as e:
-            logger.error(f"Error walking directory: {e}")
-        return result
+        return self.adapter.walk_files()
 
     def audit(self) -> AuditResult:
         """Run full audit on target directory."""
@@ -145,14 +51,7 @@ class Auditor:
         self._compute_violations()
         
         # Check if this looks like a Claude/Cursor project
-        has_claude_structure = any([
-            (self.target_path / "CLAUDE.md").exists(),
-            (self.target_path / ".claude").exists(),
-            (self.target_path / ".cursor").exists(),
-            (self.target_path / ".agents").exists(),
-        ])
-        
-        if not has_claude_structure:
+        if not self.adapter.detect_framework():
             logger.warning("⚠  No Claude/Cursor project structure detected. Results may be incomplete.")
         
         current_tokens = self._calculate_current_startup_tokens()
@@ -187,11 +86,11 @@ class Auditor:
         
         tokens = self.tokenizer.count_tokens(content)
         
-        # Check markdown files (original behavior)
+        # Check markdown files
         if suffix in [".md", ".markdown"]:
             self._check_non_ascii(file_path, content)
             
-            if file_path.name in GLOBAL_INSTRUCTION_FILES:
+            if self.adapter.is_global_instruction_file(file_path):
                 self.global_files.append(GlobalFileReport(path=str(rel_path), tokens=tokens))
             
             if is_skill_file(file_path, content):
@@ -199,7 +98,8 @@ class Auditor:
                 body = extract_skill_body(content)
                 body_tokens = self.tokenizer.count_tokens(body)
                 desc = get_skill_description(frontmatter)
-                is_ungated = self._is_ungated_skill(rel_path, file_path)
+                is_pointer = self.adapter.is_pointer_file(content)
+                is_ungated = not self.adapter.is_in_vault(rel_path) and not is_pointer
                 
                 skill_report = SkillReport(
                     path=str(rel_path),
@@ -222,7 +122,6 @@ class Auditor:
                     )
                 )
             elif has_malformed_frontmatter(content):
-                # Flaw 5 fix: Detect malformed frontmatter and still count tokens
                 self.violations.append(
                     Violation(
                         file=str(rel_path),
@@ -231,8 +130,7 @@ class Auditor:
                         severity=ViolationSeverity.WARN,
                     )
                 )
-            elif "skills" in rel_path.parts:
-                # File is in skills/ but has no frontmatter
+            elif "skills" in rel_path.parts and not self.adapter.is_pointer_file(content):
                 self.violations.append(
                     Violation(
                         file=str(rel_path),
@@ -242,9 +140,9 @@ class Auditor:
                     )
                 )
         
-        # Check config files for system prompts (Flaw 3 fix)
-        elif suffix in CONFIG_FILES_WITH_SYSTEM_PROMPTS:
-            if self._is_config_with_system_prompt(file_path, content):
+        # Check config files for system prompts
+        elif suffix in self.adapter.config.config_files_with_system_prompts:
+            if self.adapter.is_config_with_system_prompt(file_path, content):
                 self.global_files.append(
                     GlobalFileReport(
                         path=str(rel_path),
@@ -252,36 +150,6 @@ class Auditor:
                         note=f"Config file with system prompt ({suffix})"
                     )
                 )
-        
-    def _is_config_with_system_prompt(self, file_path: Path, content: str) -> bool:
-        """Check if config file contains system prompts or agent instructions."""
-        suffix = file_path.suffix.lower()
-        basename = file_path.stem.lower()
-        
-        # Check filename heuristics
-        for keyword in CONFIG_FILES_WITH_SYSTEM_PROMPTS.get(suffix, []):
-            if keyword in basename:
-                return True
-        
-        # Check content for system prompt keys
-        system_prompt_keys = {
-            "system_prompt",
-            "system",
-            "prompt",
-            "instructions",
-            "instruction",
-            "agent_prompt",
-            "context",
-            "preamble",
-            "rules",
-        }
-        
-        content_lower = content.lower()
-        for key in system_prompt_keys:
-            if f'"{key}"' in content_lower or f"'{key}'" in content_lower or f"{key}:" in content_lower:
-                return True
-        
-        return False
     
     def _check_non_ascii(self, file_path: Path, content: str) -> None:
         """Check for high non-ASCII character ratio."""

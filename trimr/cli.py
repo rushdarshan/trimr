@@ -4,8 +4,9 @@ import typer
 from typing import Optional
 
 from .audit import Auditor
+from .fixer import Fixer
 from .migrator import Migrator
-from .reporter import print_report, print_migration_report
+from .reporter import print_report, print_migration_report, print_fix_report
 
 app = typer.Typer(
     name="trimr",
@@ -92,8 +93,51 @@ def migrate(
         raise typer.Exit(code=1)
 
 
+def fix(
+    path: str = typer.Argument(
+        ".",
+        help="Path to fix",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview changes without modifying files",
+    ),
+    auto: bool = typer.Option(
+        True,
+        "--auto/--no-auto",
+        help="Run automatic safe fixes",
+    ),
+    format: str = typer.Option(
+        "text",
+        "--format",
+        "-f",
+        help="Output format: text or json",
+    ),
+) -> None:
+    """Apply safe automatic fixes for skill frontmatter and vault migration."""
+    try:
+        target = Path(path).resolve()
+        if not target.exists():
+            typer.secho(f"Error: Path does not exist: {path}", fg="red", err=True)
+            raise typer.Exit(code=1)
+
+        auditor = Auditor(target)
+        audit_result = auditor.audit()
+
+        fixer = Fixer(target, dry_run=dry_run, auto=auto)
+        fix_plan = fixer.fix(audit_result)
+
+        print_fix_report(audit_result, fix_plan, format=format, dry_run=dry_run)
+
+    except Exception as e:
+        typer.secho(f"Error: {e}", fg="red", err=True)
+        raise typer.Exit(code=1)
+
+
 app.command()(audit)
 app.command()(migrate)
+app.command()(fix)
 
 
 def main() -> None:
