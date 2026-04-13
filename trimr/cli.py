@@ -25,6 +25,11 @@ def audit(
         "-f",
         help="Output format: text or json",
     ),
+    framework: str = typer.Option(
+        None,
+        "--framework",
+        help="Framework hint: claude, langchain, crewai, or openai (auto-detect if omitted)",
+    ),
     fix: bool = typer.Option(
         False,
         "--fix",
@@ -38,7 +43,7 @@ def audit(
             typer.secho(f"Error: Path does not exist: {path}", fg="red", err=True)
             raise typer.Exit(code=1)
         
-        auditor = Auditor(target)
+        auditor = Auditor(target, framework_hint=framework)
         result = auditor.audit()
         
         print_report(result, format=format)
@@ -58,6 +63,11 @@ def migrate(
         "--dry-run",
         help="Preview changes without modifying files",
     ),
+    framework: str = typer.Option(
+        None,
+        "--framework",
+        help="Framework hint: claude, langchain, crewai, or openai (auto-detect if omitted)",
+    ),
     format: str = typer.Option(
         "text",
         "--format",
@@ -73,7 +83,7 @@ def migrate(
             raise typer.Exit(code=1)
         
         # Run audit first to get violations
-        auditor = Auditor(target)
+        auditor = Auditor(target, framework_hint=framework)
         audit_result = auditor.audit()
         
         # Check for violations
@@ -108,6 +118,11 @@ def fix(
         "--auto/--no-auto",
         help="Run automatic safe fixes",
     ),
+    framework: str = typer.Option(
+        None,
+        "--framework",
+        help="Framework hint: claude, langchain, crewai, or openai (auto-detect if omitted)",
+    ),
     format: str = typer.Option(
         "text",
         "--format",
@@ -122,7 +137,7 @@ def fix(
             typer.secho(f"Error: Path does not exist: {path}", fg="red", err=True)
             raise typer.Exit(code=1)
 
-        auditor = Auditor(target)
+        auditor = Auditor(target, framework_hint=framework)
         audit_result = auditor.audit()
 
         fixer = Fixer(target, dry_run=dry_run, auto=auto)

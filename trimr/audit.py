@@ -21,18 +21,93 @@ from .models import (
     ViolationSeverity,
 )
 from .adapters import ClaudeAdapter
+from .adapters.base import FrameworkAdapter
 
 logger = logging.getLogger(__name__)
 
 
 class Auditor:
-    def __init__(self, target_path: Path):
+    def __init__(self, target_path: Path, framework_hint: Optional[str] = None):
         self.target_path = target_path.resolve()
         self.tokenizer = get_tokenizer()
         self.violations: List[Violation] = []
         self.global_files: List[GlobalFileReport] = []
         self.skills: List[SkillReport] = []
-        self.adapter = ClaudeAdapter(self.target_path)
+        self.framework_hint = framework_hint
+        self.adapter = self._detect_and_load_adapter()
+
+    def _detect_and_load_adapter(self) -> FrameworkAdapter:
+        """Auto-detect framework and load appropriate adapter.
+        
+        Detection order: Claude → LangChain → CrewAI → OpenAI → default Claude
+        Can be overridden with framework_hint parameter.
+        """
+        if self.framework_hint:
+            adapter_map = {
+                'claude': ClaudeAdapter,
+                'langchain': self._get_langchain_adapter,
+                'crewai': self._get_crewai_adapter,
+                'openai': self._get_openai_adapter,
+            }
+            adapter_class = adapter_map.get(self.framework_hint.lower())
+            if adapter_class:
+                if adapter_class == ClaudeAdapter:
+                    return ClaudeAdapter(self.target_path)
+                return adapter_class()
+        
+        # Auto-detection: try each framework in order
+        # First try Claude
+        claude_adapter = ClaudeAdapter(self.target_path)
+        if claude_adapter.detect_framework():
+            logger.info("✓ Detected Claude framework")
+            return claude_adapter
+        
+        # Try other frameworks
+        adapter_factories = [
+            self._get_langchain_adapter,
+            self._get_crewai_adapter,
+            self._get_openai_adapter,
+        ]
+        
+        for adapter_factory in adapter_factories:
+            try:
+                adapter = adapter_factory()
+                if adapter.detect_framework():
+                    logger.info(f"✓ Detected {adapter.__class__.__name__} framework")
+                    return adapter
+            except Exception as e:
+                logger.debug(f"Error checking {adapter_factory.__name__}: {e}")
+        
+        # Default to Claude if nothing detected
+        logger.debug("No framework detected; defaulting to Claude")
+        return ClaudeAdapter(self.target_path)
+
+    def _get_langchain_adapter(self) -> FrameworkAdapter:
+        """Lazily import LangChain adapter."""
+        try:
+            from .adapters.langchain_adapter import LangChainAdapter
+            return LangChainAdapter(self.target_path)
+        except ImportError:
+            logger.debug("LangChain adapter not available")
+            return ClaudeAdapter(self.target_path)
+
+    def _get_crewai_adapter(self) -> FrameworkAdapter:
+        """Lazily import CrewAI adapter."""
+        try:
+            from .adapters.crewai_adapter import CrewAIAdapter
+            return CrewAIAdapter(self.target_path)
+        except ImportError:
+            logger.debug("CrewAI adapter not available")
+            return ClaudeAdapter(self.target_path)
+
+    def _get_openai_adapter(self) -> FrameworkAdapter:
+        """Lazily import OpenAI adapter."""
+        try:
+            from .adapters.openai_adapter import OpenAIAdapter
+            return OpenAIAdapter(self.target_path)
+        except ImportError:
+            logger.debug("OpenAI adapter not available")
+            return ClaudeAdapter(self.target_path)
 
     def walk_files(self) -> List[Path]:
         """Recursively walk target directory, respecting exclusions."""
