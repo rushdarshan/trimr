@@ -64,9 +64,21 @@ def render_text_report(result: AuditResult) -> str:
     
     if result.violations:
         lines.append(f"Violations ({len(result.violations)})")
-        for v in result.violations:
-            severity_str = f"[{v.severity.value}]"
-            lines.append(f"  {severity_str:<12} {v.file} | {v.detail}")
+        
+        # Group violations by type
+        config_violations = [v for v in result.violations if v.violation_type.value == "CONFIG"]
+        arch_violations = [v for v in result.violations if v.violation_type.value == "ARCH"]
+        
+        if config_violations:
+            lines.append("  [CONFIG] Quick fixes — 10 minutes each:")
+            for v in config_violations:
+                lines.append(f"    {v.file} | {v.detail}")
+        
+        if arch_violations:
+            lines.append("  [ARCH] Structural improvements (real token savings):")
+            for v in arch_violations:
+                lines.append(f"    {v.file} | {v.detail}")
+        
         lines.append("")
         lines.append("Run `trimr fix ./path` to auto-fix.")
 

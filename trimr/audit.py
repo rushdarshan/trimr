@@ -19,6 +19,7 @@ from .models import (
     Violation,
     ViolationCode,
     ViolationSeverity,
+    ViolationType,
 )
 from .adapters import ClaudeAdapter
 from .adapters.base import FrameworkAdapter
@@ -194,6 +195,7 @@ class Auditor:
                         code=ViolationCode.MALFORMED_FRONTMATTER,
                         detail="Frontmatter found but missing required 'name' or 'description' field",
                         severity=ViolationSeverity.INFO,
+                        violation_type=ViolationType.CONFIG,  # Quick fix: add fields
                     )
                 )
             elif has_malformed_frontmatter(content):
@@ -203,6 +205,7 @@ class Auditor:
                         code=ViolationCode.MALFORMED_FRONTMATTER,
                         detail="Frontmatter delimiter (---) not on line 1. Expected format: --- at line 1, then YAML, then --- to close.",
                         severity=ViolationSeverity.WARN,
+                        violation_type=ViolationType.CONFIG,  # Quick fix: add --- on line 1
                     )
                 )
             elif "skills" in rel_path.parts and not self.adapter.is_pointer_file(content):
@@ -212,6 +215,7 @@ class Auditor:
                         code=ViolationCode.NO_FRONTMATTER,
                         severity=ViolationSeverity.WARN,
                         detail="Skill file in skills/ directory missing YAML frontmatter",
+                        violation_type=ViolationType.CONFIG,  # Quick fix: add frontmatter
                     )
                 )
         
@@ -259,6 +263,7 @@ class Auditor:
                         severity=ViolationSeverity.CRITICAL,
                         file=global_file.path,
                         detail=f"Exceeds 3000 token limit by {global_file.excess} tokens",
+                        violation_type=ViolationType.ARCH,  # Requires migration/refactoring
                     )
                 )
         
@@ -269,6 +274,7 @@ class Auditor:
                     severity=ViolationSeverity.CRITICAL,
                     file="(all global files)",
                     detail=f"Cumulative global files exceed 3000 tokens by {cumulative_global_tokens - 3000} tokens",
+                    violation_type=ViolationType.ARCH,  # Requires major refactoring
                 )
             )
         
@@ -280,6 +286,7 @@ class Auditor:
                         severity=ViolationSeverity.WARN,
                         file=skill.path,
                         detail="Ungated skill eligible for migration to .vault/",
+                        violation_type=ViolationType.ARCH,  # Requires migration
                     )
                 )
             
@@ -290,6 +297,7 @@ class Auditor:
                         severity=ViolationSeverity.WARN,
                         file=skill.path,
                         detail=f"Description is {skill.description_length} chars; routing may fail",
+                        violation_type=ViolationType.CONFIG,  # Quick fix: update frontmatter
                     )
                 )
             
@@ -300,6 +308,7 @@ class Auditor:
                         severity=ViolationSeverity.INFO,
                         file=skill.path,
                         detail=f"Skill body is {skill.body_tokens} tokens (>5000 recommended limit)",
+                        violation_type=ViolationType.CONFIG,  # Can trim content or split skill
                     )
                 )
 

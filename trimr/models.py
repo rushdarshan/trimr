@@ -9,6 +9,12 @@ class ViolationSeverity(Enum):
     INFO = "INFO"
 
 
+class ViolationType(Enum):
+    """Type of violation fix effort."""
+    CONFIG = "CONFIG"    # Quick fix (10 min)
+    ARCH = "ARCH"        # Structural problem (requires migration)
+
+
 class ViolationCode(Enum):
     MALFORMED_FRONTMATTER = "MALFORMED_FRONTMATTER"
     GLOBAL_BLOAT = "GLOBAL_BLOAT"
@@ -26,6 +32,8 @@ class Violation:
     severity: ViolationSeverity
     file: str
     detail: str
+    violation_type: ViolationType = ViolationType.ARCH  # Default to architectural
+
 
 
 @dataclass
