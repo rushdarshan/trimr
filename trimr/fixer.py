@@ -52,6 +52,17 @@ class Fixer:
 
         handled_paths: Set[Path] = set()
 
+        # Migrate existing valid skills first so that vault-collision handling
+        # is deterministic (e.g. when a vaulted orphan also needs frontmatter).
+        for skill in audit_result.skills:
+            rel_path = Path(skill.path)
+            if rel_path in handled_paths:
+                continue
+
+            if self._should_migrate_skill(skill, rel_path):
+                self._migrate_skill(skill)
+                handled_paths.add(rel_path)
+
         for violation in audit_result.violations:
             if violation.code != ViolationCode.NO_FRONTMATTER:
                 continue
@@ -62,15 +73,6 @@ class Fixer:
 
             self._fix_orphan_markdown(rel_path)
             handled_paths.add(rel_path)
-
-        for skill in audit_result.skills:
-            rel_path = Path(skill.path)
-            if rel_path in handled_paths:
-                continue
-
-            if self._should_migrate_skill(skill, rel_path):
-                self._migrate_skill(skill)
-                handled_paths.add(rel_path)
 
         return self.plan
 
@@ -218,13 +220,16 @@ class Fixer:
         return file_path
 
     def _is_pointer_file(self, content: str) -> bool:
-        return any(marker in content for marker in POINTER_FILE_MARKERS)
+        return any(
+            re.search(rf"(?<![A-Za-z0-9_]){re.escape(marker)}(?![A-Za-z0-9_])", content)
+            for marker in POINTER_FILE_MARKERS
+        )
 
     def _is_in_vault(self, rel_path: Path) -> bool:
         return any(part in VAULT_DIRS for part in rel_path.parts)
 
     def _is_global_instruction_file(self, rel_path: Path) -> bool:
-        return len(rel_path.parts) == 1 and rel_path.name in GLOBAL_INSTRUCTION_FILES
+        return rel_path.name in GLOBAL_INSTRUCTION_FILES
 
     def _next_available_vault_path(self, rel_path: Path) -> Path:
         vault_path = self._vault_path_for(rel_path)

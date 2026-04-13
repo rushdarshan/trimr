@@ -87,10 +87,10 @@ class Migrator:
         if not skill_name:
             skill_name = Path(skill.path).stem
         
-        # Determine vault location (.vault/skills/category/SKILL.md)
+        # Determine vault location (.vault/skills/<category>/SKILL.md)
         rel_parent = source_path.parent
         vault_parent = self.target_path / ".vault" / "skills" / rel_parent.name
-        vault_path = vault_parent / "SKILL.md"
+        vault_path = self._next_available_vault_path(vault_parent / "SKILL.md")
         
         # Create pointer file content
         pointer_content = self._create_pointer_file(skill_name, vault_path)
@@ -98,15 +98,12 @@ class Migrator:
         
         if not self.dry_run:
             # Create vault directory structure
-            vault_parent.mkdir(parents=True, exist_ok=True)
-            
-            # Move skill to vault (check if target already exists to avoid silent overwrites)
-            if vault_path.exists():
-                logger.warning(f"Vault skill already exists at {vault_path.relative_to(self.target_path)}, skipping move")
-            else:
-                shutil.move(str(source_path), str(vault_path))
-                logger.info(f"Moved {skill.path} → {vault_path.relative_to(self.target_path)}")
-            
+            vault_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Copy into vault (avoid remove+recreate edge cases on Windows)
+            shutil.copy2(source_path, vault_path)
+            logger.info(f"Copied {skill.path} → {vault_path.relative_to(self.target_path)}")
+
             # Create pointer file in original location
             source_path.write_text(pointer_content, encoding="utf-8")
             logger.info(f"Created pointer file at {skill.path}")
@@ -122,6 +119,24 @@ class Migrator:
             reason=f"Ungated skill: {tokens_saved} tokens saved (was {skill.tokens}, now {pointer_tokens} pointer)"
         )
         self.plan.add_change(change)
+
+    def _next_available_vault_path(self, vault_path: Path) -> Path:
+        if not vault_path.exists():
+            return vault_path
+
+        if vault_path.name == "SKILL.md":
+            base_dir = vault_path.parent
+            for i in range(2, 1000):
+                candidate = base_dir.with_name(f"{base_dir.name}-{i}") / vault_path.name
+                if not candidate.exists():
+                    return candidate
+        else:
+            for i in range(2, 1000):
+                candidate = vault_path.with_name(f"{vault_path.stem}-{i}{vault_path.suffix}")
+                if not candidate.exists():
+                    return candidate
+
+        raise RuntimeError(f"Unable to find available vault path for {vault_path}")
     
     def _create_pointer_file(self, skill_name: str, vault_path: Path) -> str:
         """Generate pointer file content with load_skill instruction."""

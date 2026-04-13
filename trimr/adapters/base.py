@@ -6,6 +6,7 @@ from typing import List, Set, Dict, Optional
 from dataclasses import dataclass
 import pathspec
 import json
+import re
 
 try:
     import tomllib  # py311+
@@ -190,7 +191,10 @@ class FrameworkAdapter(ABC):
     
     def is_pointer_file(self, content: str) -> bool:
         """Check if file contains pointer file markers."""
-        return any(marker in content for marker in self.config.pointer_file_markers)
+        return any(
+            re.search(rf"(?<![A-Za-z0-9_]){re.escape(marker)}(?![A-Za-z0-9_])", content)
+            for marker in self.config.pointer_file_markers
+        )
     
     def is_in_vault(self, rel_path: Path) -> bool:
         """Check if file is within a vault directory."""
