@@ -6,25 +6,23 @@ Audits AI agent projects for token bloat, enforces context budget limits, and au
 
 ## Who This Is For
 
-**trimr is optimized for Claude Code and Cursor IDE** projects using markdown-based skills with YAML frontmatter.
-
-**Not for:** Langchain, OpenAI Assistants, Anthropic Workbench, or any framework that doesn't use `.md` skill files.
+**trimr is optimized for Claude Code and Cursor IDE** projects using markdown-based skills with YAML frontmatter. Audits token bloat in global instruction files and ungated skills, calculates startup costs, and auto-migrates to progressive-disclosure architecture.
 
 ## Quick Start
 
 ```bash
 # Install
-pip install -e .
+pip install trimr
 
 # Audit a project
 trimr audit ./path/to/agent
 trimr audit ./path/to/agent --format json
 
 # Preview migration (dry-run)
-trimr migrate ./path/to/agent --dry-run
+trimr fix ./path/to/agent --dry-run
 
 # Apply migration (actually moves files)
-trimr migrate ./path/to/agent
+trimr fix ./path/to/agent
 ```
 
 ## What It Does
@@ -50,9 +48,10 @@ trimr migrate ./path/to/agent
 
 1. **Moves** ungated skills (> 150 tokens) to `.vault/skills/<category>/SKILL.md`
 2. **Generates** pointer files in original locations with `load_skill` instructions
-3. **Truncates** global files exceeding 3,000 tokens while preserving YAML frontmatter
-4. **Supports** `--dry-run` to preview changes without modifying files
-5. **Calculates** token savings for each change
+3. **Updates** CLAUDE.md with load_skill blocks for migrated skills
+4. **Truncates** global files exceeding 3,000 tokens while preserving YAML frontmatter
+5. **Supports** `--dry-run` to preview changes without modifying files
+6. **Calculates** token savings for each change
 
 ## Example Workflows
 
