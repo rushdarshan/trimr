@@ -1,0 +1,23 @@
+{
+  "name": "support-copilot",
+  "model": "gpt-4.1-mini",
+  "instructions": "You are a support copilot for a SaaS product. Use retrieved documents first, keep answers concise, and ask for missing account details before making account-specific recommendations.",
+  "tools": [
+    {"type": "file_search"},
+    {
+      "type": "function",
+      "function": {
+        "name": "lookup_ticket",
+        "description": "Fetch ticket status, priority, linked customer account, and recent activity.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "ticket_id": {"type": "string"}
+          },
+          "required": ["ticket_id"]
+        }
+      }
+    }
+  ]
+}
+

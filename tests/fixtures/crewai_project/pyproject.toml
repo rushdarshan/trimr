@@ -1,0 +1,8 @@
+[project]
+name = "market-research-crew"
+version = "0.1.0"
+dependencies = [
+    "crewai>=0.70",
+    "crewai-tools>=0.12",
+]
+

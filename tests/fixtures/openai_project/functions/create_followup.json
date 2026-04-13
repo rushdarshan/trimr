@@ -1,0 +1,13 @@
+{
+  "name": "create_followup",
+  "description": "Create a follow-up support task with owner, due date, and customer-visible summary.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "owner": {"type": "string"},
+      "summary": {"type": "string"}
+    },
+    "required": ["owner", "summary"]
+  }
+}
+

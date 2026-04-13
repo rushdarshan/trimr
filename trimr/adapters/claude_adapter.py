@@ -50,12 +50,12 @@ class ClaudeAdapter(FrameworkAdapter):
     
     def detect_framework(self) -> bool:
         """Check if target is a Claude Code project."""
-        return any([
-            (self.target_path / "CLAUDE.md").exists(),
-            (self.target_path / ".claude").exists(),
-            (self.target_path / ".cursor").exists(),
-            (self.target_path / ".agents").exists(),
-        ])
+        # Be conservative: many frameworks may include a CLAUDE.md for compatibility,
+        # but that does not mean the project is primarily a Claude/Cursor project.
+        return any(
+            (self.target_path / d).exists()
+            for d in (".claude", ".cursor", ".agents", ".anthropic")
+        )
     
     def is_skill_file(self, file_path: Path, content: str) -> bool:
         """Check if file is a Claude skill file."""

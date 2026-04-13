@@ -25,6 +25,8 @@ env/
 
 # Project-specific
 .vault/
+!tests/fixtures/**/.vault/
+!tests/fixtures/**/.vault/**
 *.lock
 
 # Testing

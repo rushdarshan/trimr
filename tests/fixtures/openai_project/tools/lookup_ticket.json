@@ -1,0 +1,15 @@
+{
+  "type": "function",
+  "function": {
+    "name": "lookup_ticket",
+    "description": "Fetch ticket status, customer account, priority, and latest internal update.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ticket_id": {"type": "string"}
+      },
+      "required": ["ticket_id"]
+    }
+  }
+}
+
