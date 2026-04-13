@@ -5,6 +5,22 @@ from .models import AuditResult, ViolationSeverity
 from .migrator import MigrationPlan
 
 
+# Claude 3.5 Sonnet pricing: $3 per million input tokens
+TOKENS_PER_DOLLAR = 1_000_000 / 3
+SESSIONS_PER_DAY = 100
+
+def _format_cost(tokens: int) -> str:
+    """Format tokens as cost estimate."""
+    cost = tokens / TOKENS_PER_DOLLAR
+    return f"${cost:.4f}"
+
+def _monthly_savings(tokens_saved: int) -> str:
+    """Calculate monthly savings at 100 sessions/day."""
+    daily_savings = (tokens_saved * SESSIONS_PER_DAY) / TOKENS_PER_DOLLAR
+    monthly_savings = daily_savings * 30
+    return f"${monthly_savings:.2f}/month"
+
+
 def render_text_report(result: AuditResult) -> str:
     """Render audit result as formatted text output."""
     lines = []
@@ -36,9 +52,14 @@ def render_text_report(result: AuditResult) -> str:
         lines.append("")
     
     lines.append("Startup token cost")
-    lines.append(f"  Current:                     ~{result.startup_tokens_current:,} tokens")
-    lines.append(f"  After migration:             ~{result.startup_tokens_projected:,} tokens")
-    lines.append(f"  Reduction:                   {result.reduction_percent:.1f}%")
+    current_cost = _format_cost(result.startup_tokens_current)
+    projected_cost = _format_cost(result.startup_tokens_projected)
+    tokens_saved = result.startup_tokens_current - result.startup_tokens_projected
+    monthly_savings = _monthly_savings(tokens_saved) if tokens_saved > 0 else "$0.00/month"
+    
+    lines.append(f"  Current:                     ~{result.startup_tokens_current:,} tokens  ({current_cost}/session)")
+    lines.append(f"  After migration:             ~{result.startup_tokens_projected:,} tokens  ({projected_cost}/session)")
+    lines.append(f"  Reduction:                   {result.reduction_percent:.1f}% — saves {monthly_savings} @ 100 sessions/day")
     lines.append("")
     
     if result.violations:
@@ -47,7 +68,7 @@ def render_text_report(result: AuditResult) -> str:
             severity_str = f"[{v.severity.value}]"
             lines.append(f"  {severity_str:<12} {v.file} | {v.detail}")
         lines.append("")
-        lines.append("Run `trimr migrate ./path` to auto-fix.")
+        lines.append("Run `trimr fix ./path` to auto-fix.")
 
     
     return "\n".join(lines)
