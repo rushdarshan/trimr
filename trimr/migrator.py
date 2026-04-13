@@ -48,17 +48,23 @@ class Migrator:
     def migrate(self, audit_result: AuditResult) -> MigrationPlan:
         """Execute migration based on audit results."""
         # Step 1: Migrate ungated skills (only if they save tokens when moved)
+        migrated_skills = []
         for skill in audit_result.skills:
             if skill.ungated and skill.vaultable and skill.has_frontmatter:
                 # Only migrate if the skill is large enough to benefit
                 # Pointer file is typically 50-100 tokens, so only migrate if skill > 150 tokens
                 if skill.tokens > 150:
                     self._migrate_skill(skill)
+                    migrated_skills.append(skill)
         
         # Step 2: Truncate global files that exceed limit
         for global_file in audit_result.global_files:
             if global_file.over_limit:
                 self._truncate_global_file(global_file)
+        
+        # Step 3: Update CLAUDE.md with load_skill pointers for migrated skills
+        if migrated_skills:
+            self._update_claude_md(migrated_skills)
         
         return self.plan
     
@@ -259,3 +265,55 @@ Or reference directly via skill_id: {skill_id}
                 truncated = truncated[:last_sentence + 1]
         
         return truncated.rstrip()
+    
+    def _update_claude_md(self, migrated_skills: List[SkillReport]) -> None:
+        """Update CLAUDE.md to add load_skill instructions for migrated skills."""
+        claude_file = self.target_path / "CLAUDE.md"
+        
+        # Build load_skill instructions block
+        load_skill_block = "\n\n## Migrated Skills (Progressive Disclosure)\n\n"
+        load_skill_block += "The following skills have been moved to `.vault/` for on-demand loading:\n\n"
+        
+        for skill in migrated_skills:
+            from .parser import extract_frontmatter
+            skill_path = self.target_path / skill.path
+            
+            # Try to get skill name from frontmatter
+            if skill_path.exists():
+                try:
+                    content = skill_path.read_text(encoding="utf-8")
+                    frontmatter = extract_frontmatter(content)
+                    skill_name = frontmatter.get("name", skill.path) if frontmatter else skill.path
+                except:
+                    skill_name = skill.path
+            else:
+                skill_name = skill.path
+            
+            # Add load_skill instruction
+            load_skill_block += f"```\nload_skill \"{skill.path}\"\n```\n\n"
+        
+        if not self.dry_run:
+            # Read or create CLAUDE.md
+            if claude_file.exists():
+                content = claude_file.read_text(encoding="utf-8")
+                # Append if not already present
+                if "## Migrated Skills" not in content:
+                    content += load_skill_block
+                else:
+                    logger.warning(f"{claude_file} already contains migrated skills section")
+                    return
+            else:
+                content = "# Project Instructions\n" + load_skill_block
+            
+            claude_file.write_text(content, encoding="utf-8")
+            logger.info(f"Updated {claude_file} with load_skill instructions")
+            
+            # Record change
+            change = MigrationChange(
+                change_type="claude_md_updated",
+                source="CLAUDE.md",
+                tokens_saved=0,
+                reason=f"Added load_skill instructions for {len(migrated_skills)} migrated skills"
+            )
+            self.plan.add_change(change)
+
