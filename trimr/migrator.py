@@ -221,9 +221,18 @@ Or reference directly via skill_id: {skill_id}
         if available_body_tokens <= 0:
             available_body_tokens = 500  # Minimum body size
         
-        # Estimate where to truncate (rough approximation)
-        truncated_body = self._truncate_to_tokens(body, available_body_tokens)
-        truncated_body += "\n\n[... truncated by trimr. Run `trimr migrate --help` for migration details ...]\n"
+        # Truncate using section-aware algorithm
+        truncated_body, removed_sections = self._truncate_to_tokens(body, available_body_tokens)
+        
+        # Add truncation notice with info about removed sections
+        if removed_sections:
+            notice = f"\n\n[... truncated by trimr. Removed sections: {', '.join(removed_sections[:3])}"
+            if len(removed_sections) > 3:
+                notice += f" and {len(removed_sections) - 3} more"
+            notice += ". Run `trimr migrate --help` for migration details ...]\n"
+            truncated_body += notice
+        else:
+            truncated_body += "\n\n[... truncated by trimr. Run `trimr migrate --help` for migration details ...]\n"
         
         new_content = frontmatter_text + truncated_body
         
@@ -243,28 +252,78 @@ Or reference directly via skill_id: {skill_id}
         )
         self.plan.add_change(change)
     
-    def _truncate_to_tokens(self, text: str, target_tokens: int) -> str:
-        """Truncate text to approximately target token count."""
+    def _truncate_to_tokens(self, text: str, target_tokens: int) -> tuple[str, list[str]]:
+        """
+        Truncate text to approximately target token count while preserving markdown section structure.
+        
+        Returns:
+            (truncated_text, removed_sections) - sections that were dropped
+        """
         if self.tokenizer.count_tokens(text) <= target_tokens:
-            return text
+            return text, []
         
-        # Rough heuristic: truncate by character count
-        # Assumes ~4 chars per token on average
-        target_chars = int(target_tokens * 4)
+        # Parse markdown sections (group by ## headings)
+        sections = self._parse_sections(text)
         
-        # Find last sentence or paragraph boundary
-        truncated = text[:target_chars]
+        # Add sections until we exceed token limit
+        kept_sections = []
+        removed_sections = []
+        current_tokens = 0
         
-        # Try to end at a paragraph or sentence boundary
-        last_newline = truncated.rfind("\n\n")
-        if last_newline > target_chars * 0.8:  # If close to target
-            truncated = truncated[:last_newline]
-        else:
-            last_sentence = truncated.rfind(". ")
-            if last_sentence > target_chars * 0.8:
-                truncated = truncated[:last_sentence + 1]
+        for section in sections:
+            section_tokens = self.tokenizer.count_tokens(section['content'])
+            
+            # Always try to keep at least one section
+            if not kept_sections:
+                kept_sections.append(section)
+                current_tokens += section_tokens
+                continue
+            
+            # Check if adding this section would exceed limit
+            if current_tokens + section_tokens <= target_tokens:
+                kept_sections.append(section)
+                current_tokens += section_tokens
+            else:
+                # Section won't fit
+                removed_sections.append(section['title'] or "(no title)")
         
-        return truncated.rstrip()
+        # Join kept sections
+        truncated = "\n\n".join([s['content'] for s in kept_sections])
+        
+        return truncated, removed_sections
+    
+    def _parse_sections(self, text: str) -> list[dict]:
+        """Parse markdown into sections grouped by ## headings."""
+        sections = []
+        current_section = []
+        current_title = None
+        
+        lines = text.split('\n')
+        
+        for line in lines:
+            if line.startswith('## '):
+                # Save previous section if exists
+                if current_section:
+                    sections.append({
+                        'title': current_title,
+                        'content': '\n'.join(current_section).strip()
+                    })
+                    current_section = []
+                
+                # Start new section
+                current_title = line[3:].strip()
+                current_section = [line]
+            else:
+                current_section.append(line)
+        
+        # Save final section
+        if current_section:
+            sections.append({
+                'title': current_title,
+                'content': '\n'.join(current_section).strip()
+            })
+        
+        return sections if sections else [{'title': None, 'content': text.strip()}]
     
     def _update_claude_md(self, migrated_skills: List[SkillReport]) -> None:
         """Update CLAUDE.md to add load_skill instructions for migrated skills."""
