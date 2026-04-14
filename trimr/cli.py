@@ -35,6 +35,17 @@ def audit(
         "--fix",
         help="Apply fixes (v0.2+)",
     ),
+    output: str = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Save output to file (supports .json, .txt, .md)",
+    ),
+    stats: bool = typer.Option(
+        False,
+        "--stats",
+        help="Show detailed statistics (file count, token distribution)",
+    ),
 ) -> None:
     """Audit a project for token bloat and skill migration opportunities."""
     try:
@@ -46,7 +57,24 @@ def audit(
         auditor = Auditor(target, framework_hint=framework)
         result = auditor.audit()
         
-        print_report(result, format=format)
+        # Generate report
+        if format == "json":
+            from .reporter import render_json_report
+            report_text = render_json_report(result)
+        else:
+            from .reporter import render_text_report, render_stats_section
+            report_text = render_text_report(result)
+            if stats:
+                stats_text = render_stats_section(result)
+                report_text += "\n\n" + stats_text
+        
+        # Output to console or file
+        if output:
+            output_path = Path(output)
+            output_path.write_text(report_text, encoding="utf-8")
+            typer.secho(f"✓ Report saved to {output_path}", fg="green")
+        else:
+            print(report_text)
         
     except Exception as e:
         typer.secho(f"Error: {e}", fg="red", err=True)

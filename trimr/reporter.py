@@ -86,6 +86,53 @@ def render_text_report(result: AuditResult) -> str:
     return "\n".join(lines)
 
 
+def render_stats_section(result: AuditResult) -> str:
+    """Render detailed statistics section."""
+    lines = []
+    
+    lines.append("Statistics")
+    lines.append("-" * 60)
+    
+    # File counts
+    total_skills = len(result.skills)
+    ungated_skills = sum(1 for s in result.skills if s.ungated)
+    vaultable_skills = sum(1 for s in result.skills if s.vaultable)
+    global_files = len(result.global_files)
+    
+    lines.append("")
+    lines.append(f"Files:                           {global_files} global + {total_skills} skills")
+    
+    # Token distribution
+    if result.skills:
+        total_skill_tokens = sum(s.tokens for s in result.skills)
+        avg_skill_tokens = total_skill_tokens // total_skills if total_skills > 0 else 0
+        max_skill_tokens = max((s.tokens for s in result.skills), default=0)
+        min_skill_tokens = min((s.tokens for s in result.skills), default=0)
+        
+        lines.append(f"Skill tokens:                    {total_skill_tokens:,} total")
+        lines.append(f"  Average:                       {avg_skill_tokens:,} tokens/skill")
+        lines.append(f"  Range:                         {min_skill_tokens:,}–{max_skill_tokens:,} tokens")
+    
+    if result.global_files:
+        total_global_tokens = sum(g.tokens for g in result.global_files)
+        avg_global_tokens = total_global_tokens // global_files if global_files > 0 else 0
+        max_global_tokens = max((g.tokens for g in result.global_files), default=0)
+        
+        lines.append(f"Global file tokens:              {total_global_tokens:,} total")
+        lines.append(f"  Average:                       {avg_global_tokens:,} tokens/file")
+        lines.append(f"  Largest:                       {max_global_tokens:,} tokens")
+    
+    # Violation stats
+    if result.violations:
+        critical = sum(1 for v in result.violations if v.severity.value == "CRITICAL")
+        warnings = sum(1 for v in result.violations if v.severity.value == "WARN")
+        info = sum(1 for v in result.violations if v.severity.value == "INFO")
+        
+        lines.append(f"Violations:                      {critical} critical, {warnings} warnings, {info} info")
+    
+    return "\n".join(lines)
+
+
 def render_json_report(result: AuditResult) -> str:
     """Render audit result as JSON."""
     data = {
