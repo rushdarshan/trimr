@@ -83,6 +83,15 @@ def migrate(
             typer.secho(f"Error: Path does not exist: {path}", fg="red", err=True)
             raise typer.Exit(code=1)
         
+        # Run pre-flight validation if dry-run
+        if dry_run:
+            migrator_check = Migrator(target, dry_run=True)
+            validation_ok, validation_report = migrator_check.validate_dry_run()
+            typer.secho(validation_report, fg="cyan")
+            if not validation_ok:
+                typer.secho("Pre-flight validation failed. Aborting.", fg="red", err=True)
+                raise typer.Exit(code=1)
+        
         # Run audit first to get violations
         auditor = Auditor(target, framework_hint=framework)
         audit_result = auditor.audit()

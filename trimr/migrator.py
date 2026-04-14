@@ -1,12 +1,13 @@
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 import shutil
 
 from .models import AuditResult, SkillReport, GlobalFileReport
 from .tokenizer import get_tokenizer
 from .parser import extract_frontmatter, extract_skill_body
+from .validators import PrefightChecker
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,18 @@ class Migrator:
         self.dry_run = dry_run
         self.tokenizer = get_tokenizer()
         self.plan = MigrationPlan(target_path=self.target_path, dry_run=dry_run)
+        self.preflight_checker = PrefightChecker(target_path)
+    
+    def validate_dry_run(self) -> Tuple[bool, str]:
+        """
+        Validate that migration can proceed.
+        
+        Returns:
+            (success: bool, report: str)
+        """
+        success = self.preflight_checker.validate_all()
+        report = self.preflight_checker.get_report()
+        return success, report
     
     def migrate(self, audit_result: AuditResult) -> MigrationPlan:
         """Execute migration based on audit results."""
