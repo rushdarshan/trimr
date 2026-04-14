@@ -260,13 +260,13 @@ class TestAuditorTokenCosts:
         auditor = Auditor(tmp_path)
         result = auditor.audit()
         
-        # After migration: global + (1 skill × 100 L1 metadata tokens)
-        # So projected should be: global + 100
-        # And current should be: global + actual_skill_tokens
+        # After migration: global + (1 skill × estimated L1 metadata tokens)
+        # Projected L1 metadata is calculated dynamically based on skill name/desc
+        # Current includes full skill body
         # Since skill is large, current > projected
         assert result.startup_tokens_current > result.startup_tokens_projected
-        # Projected should include L1 metadata cost (100 tokens per skill)
-        assert result.startup_tokens_projected >= 100
+        # Projected should include L1 metadata cost (now dynamically calculated, ~15-20 tokens per skill)
+        assert result.startup_tokens_projected > 0
 
     def test_audit_startup_tokens_vaulted_skill(self, tmp_path):
         """Test vaulted skills don't increase startup cost."""
