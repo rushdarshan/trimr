@@ -1,0 +1,59 @@
+# Trimr Configuration File
+# 
+# Place this file as `.trimrrc.yaml` in your project root to customize token limits
+# and projection behavior. All values are optional; defaults shown below.
+
+limits:
+  # Maximum tokens allowed in a single global file (e.g., CLAUDE.md)
+  # Default: 3000
+  # Tip: Increase for large contexts, decrease for strict budgets
+  global_tokens_limit: 3000
+
+  # Recommended maximum tokens for skill body content
+  # Warnings are shown for skills exceeding this limit
+  # Default: 5000
+  # Tip: Larger skills can hurt router precision; consider splitting
+  skill_body_tokens_recommended: 5000
+
+projection:
+  # How to calculate projected startup token cost
+  # - "measured": Generate actual YAML pointers and count real tokens (recommended)
+  # - "fixed": Use a fixed token estimate per vaultable skill (backward compatible)
+  # Default: measured
+  mode: measured
+
+  # (Only used if mode is "fixed") Token estimate per vaultable skill
+  # Default: 100
+  # Tip: With "measured" mode, typical estimates are 15-40 tokens per skill
+  fixed_tokens_per_vaultable_skill: 100
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EXAMPLES
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Example 1: Tight budget for embedded devices or low-cost deployments
+# limits:
+#   global_tokens_limit: 1500
+#   skill_body_tokens_recommended: 2000
+# projection:
+#   mode: measured
+
+# Example 2: Large context for enterprise deployments
+# limits:
+#   global_tokens_limit: 5000
+#   skill_body_tokens_recommended: 10000
+# projection:
+#   mode: measured
+
+# Example 3: Legacy fixed-cost projection (v0.2 compatibility)
+# projection:
+#   mode: fixed
+#   fixed_tokens_per_vaultable_skill: 100
+
+# Example 4: Fine-grained control (multiple config options together)
+# limits:
+#   global_tokens_limit: 2500
+#   skill_body_tokens_recommended: 4000
+# projection:
+#   mode: measured

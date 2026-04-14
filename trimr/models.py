@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, TYPE_CHECKING
 from enum import Enum
+
+if TYPE_CHECKING:
+    from .config import TrimrConfig
 
 
 class ViolationSeverity(Enum):
@@ -66,3 +69,4 @@ class AuditResult:
     global_files: List[GlobalFileReport] = field(default_factory=list)
     skills: List[SkillReport] = field(default_factory=list)
     violations: List[Violation] = field(default_factory=list)
+    config: "TrimrConfig" = field(default=None)

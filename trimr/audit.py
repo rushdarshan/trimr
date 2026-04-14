@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Set, List, Dict, Optional
 
 from .tokenizer import get_tokenizer
+from .token_estimation import estimate_skill_pointer_tokens
+from .config import load_trimrrc
 from .parser import (
     has_frontmatter,
     has_malformed_frontmatter,
@@ -36,6 +38,7 @@ class Auditor:
         self.skills: List[SkillReport] = []
         self.framework_hint = framework_hint
         self.adapter = self._detect_and_load_adapter()
+        self.config = load_trimrrc(self.target_path)
 
     def _detect_and_load_adapter(self) -> FrameworkAdapter:
         """Auto-detect framework and load appropriate adapter.
@@ -144,6 +147,7 @@ class Auditor:
             global_files=self.global_files,
             skills=self.skills,
             violations=self.violations,
+            config=self.config,
         )
 
     def _audit_file(self, file_path: Path) -> None:
@@ -254,26 +258,26 @@ class Auditor:
         cumulative_global_tokens = sum(g.tokens for g in self.global_files)
         
         for global_file in self.global_files:
-            if global_file.tokens > 3000:
+            if global_file.tokens > self.config.limits.global_tokens_limit:
                 global_file.over_limit = True
-                global_file.excess = global_file.tokens - 3000
+                global_file.excess = global_file.tokens - self.config.limits.global_tokens_limit
                 self.violations.append(
                     Violation(
                         code=ViolationCode.GLOBAL_BLOAT,
                         severity=ViolationSeverity.CRITICAL,
                         file=global_file.path,
-                        detail=f"Exceeds 3000 token limit by {global_file.excess} tokens",
+                        detail=f"Exceeds {self.config.limits.global_tokens_limit} token limit by {global_file.excess} tokens",
                         violation_type=ViolationType.ARCH,  # Requires migration/refactoring
                     )
                 )
         
-        if cumulative_global_tokens > 3000:
+        if cumulative_global_tokens > self.config.limits.global_tokens_limit:
             self.violations.append(
                 Violation(
                     code=ViolationCode.CUMULATIVE_GLOBAL_BLOAT,
                     severity=ViolationSeverity.CRITICAL,
                     file="(all global files)",
-                    detail=f"Cumulative global files exceed 3000 tokens by {cumulative_global_tokens - 3000} tokens",
+                    detail=f"Cumulative global files exceed {self.config.limits.global_tokens_limit} tokens by {cumulative_global_tokens - self.config.limits.global_tokens_limit} tokens",
                     violation_type=ViolationType.ARCH,  # Requires major refactoring
                 )
             )
@@ -301,13 +305,13 @@ class Auditor:
                     )
                 )
             
-            if skill.body_tokens > 5000:
+            if skill.body_tokens > self.config.limits.skill_body_tokens_recommended:
                 self.violations.append(
                     Violation(
                         code=ViolationCode.SKILL_BODY_LARGE,
                         severity=ViolationSeverity.INFO,
                         file=skill.path,
-                        detail=f"Skill body is {skill.body_tokens} tokens (>5000 recommended limit)",
+                        detail=f"Skill body is {skill.body_tokens} tokens (>{self.config.limits.skill_body_tokens_recommended} recommended limit)",
                         violation_type=ViolationType.CONFIG,  # Can trim content or split skill
                     )
                 )
@@ -324,11 +328,26 @@ class Auditor:
         
         Progressive-disclosure architecture:
         - Global files: loaded at startup (unchanged)
-        - Vaulted skills: L1 metadata only (~100 tokens per skill for name+description)
+        - Vaulted skills: L1 metadata only (estimated based on name+description)
         
-        Formula: global_tokens + (vaultable_skill_count × 100)
+        Formula: global_tokens + sum(estimated_pointer_tokens for each vaultable skill)
         """
         global_tokens = sum(g.tokens for g in self.global_files)
-        vaultable_skill_count = sum(1 for s in self.skills if s.vaultable)
-        l1_metadata_tokens = vaultable_skill_count * 100
+        
+        # Calculate real token estimates for each vaultable skill
+        l1_metadata_tokens = 0
+        for skill in self.skills:
+            if skill.vaultable:
+                # Get the skill's name and description
+                skill_name = skill.name or "Unknown"
+                
+                # Estimate pointer tokens using real calculation
+                pointer_tokens = estimate_skill_pointer_tokens(
+                    skill_name,
+                    skill.name or "",  # Description would be extracted separately
+                    self.tokenizer
+                )
+                l1_metadata_tokens += pointer_tokens
+                logger.debug(f"Skill {skill_name}: ~{pointer_tokens} tokens for L1 metadata")
+        
         return global_tokens + l1_metadata_tokens
